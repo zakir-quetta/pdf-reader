@@ -1,0 +1,839 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0b0c0f">
+<meta name="color-scheme" content="dark light">
+
+<!-- PWA -->
+<link rel="manifest" href="./manifest.json">
+<link rel="icon" type="image/svg+xml" href="./icon.svg">
+<link rel="apple-touch-icon" href="./icon.svg">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Reader">
+<meta name="mobile-web-app-capable" content="yes">
+
+<title>PDF & Excel Reader</title>
+
+<style>
+  :root{
+    --bg:#0b0c0f; --surface:#15181f; --surface-2:#1e222c;
+    --text:#e9ecf1; --muted:#8b93a7; --accent:#4f8cff;
+    --border:rgba(255,255,255,.08); --shadow:0 6px 24px rgba(0,0,0,.45);
+  }
+  body.light{
+    --bg:#eef0f4; --surface:#ffffff; --surface-2:#f0f2f6;
+    --text:#1a1d24; --muted:#6b7280; --accent:#3b7bf5;
+    --border:rgba(0,0,0,.10); --shadow:0 6px 20px rgba(0,0,0,.12);
+  }
+
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  [hidden]{ display:none !important; }
+  html,body{ height:100%; margin:0; overflow:hidden; }
+  body{
+    font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background:var(--bg); color:var(--text);
+    overscroll-behavior:none; -webkit-font-smoothing:antialiased;
+    user-select:none; transition:background .2s, color .2s;
+  }
+
+  .app{ display:flex; flex-direction:column; height:100vh; height:100dvh; }
+
+  /* Top bar */
+  .topbar{
+    flex:none; display:flex; align-items:center; gap:6px;
+    padding:calc(env(safe-area-inset-top,0px) + 8px) 10px 8px;
+    background:var(--surface); border-bottom:1px solid var(--border); z-index:5;
+  }
+  .doc-title{
+    flex:1; min-width:0; font-size:14px; font-weight:600;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; padding:0 4px;
+  }
+  .doc-title.is-empty{ color:var(--muted); font-weight:500; }
+
+  .btn{
+    appearance:none; border:0; background:transparent; color:var(--text);
+    width:44px; height:44px; min-width:44px; border-radius:12px;
+    display:flex; align-items:center; justify-content:center;
+    font-size:18px; line-height:1; cursor:pointer;
+    transition:background .15s, opacity .15s, transform .1s; touch-action:manipulation;
+  }
+  .btn:hover{ background:var(--surface-2); }
+  .btn:active{ background:var(--surface-2); transform:scale(.94); }
+  .btn:disabled{ opacity:.28; pointer-events:none; }
+
+  #installBtn{ color:var(--accent); }
+
+  .icon-sun{ display:none; }
+  body.light .icon-sun{ display:block; }
+  body.light .icon-moon{ display:none; }
+
+  /* iOS install hint */
+  .ios-banner{
+    flex:none; display:flex; align-items:center; gap:10px;
+    padding:10px 14px; background:var(--surface-2); color:var(--text);
+    font-size:12.5px; line-height:1.4; border-bottom:1px solid var(--border);
+  }
+  .ios-banner strong{ color:var(--accent); }
+  .ios-banner-close{
+    margin-left:auto; border:0; background:transparent; color:var(--muted);
+    font-size:20px; line-height:1; width:32px; height:32px;
+    cursor:pointer; border-radius:8px;
+  }
+  .ios-banner-close:active{ background:var(--border); }
+
+  /* Viewer */
+  .viewer{
+    position:relative; flex:1 1 auto; overflow:auto; padding:12px;
+    background:var(--bg); -webkit-overflow-scrolling:touch;
+    touch-action:pan-x pan-y; scrollbar-width:none; -ms-overflow-style:none;
+  }
+  .viewer::-webkit-scrollbar{ display:none; }
+
+  .stage{ width:max-content; margin:0 auto; transform-origin:center center; will-change:transform; }
+  #canvas{ display:block; background:#fff; border-radius:4px; box-shadow:var(--shadow); }
+
+  /* Spreadsheet */
+  .sheet-wrap{
+    position:absolute; inset:0; overflow:auto; padding:10px;
+    background:var(--bg); -webkit-overflow-scrolling:touch;
+    touch-action:pan-x pan-y; scrollbar-width:none;
+  }
+  .sheet-wrap::-webkit-scrollbar{ display:none; }
+  .sheet-stage{ width:max-content; min-width:100%; }
+  .sheet-table{
+    border-collapse:collapse; background:#fff; color:#111;
+    font-size:13px; font-variant-numeric:tabular-nums;
+  }
+  .sheet-table th,
+  .sheet-table td{
+    border:1px solid #d6d9e0; padding:.42em .68em;
+    white-space:nowrap; max-width:260px; overflow:hidden;
+    text-overflow:ellipsis; text-align:left;
+  }
+  .sheet-table tr:first-child th{
+    background:#f1f3f7; font-weight:600;
+    position:sticky; top:0; z-index:2;
+  }
+  .sheet-table tr:nth-child(even) td{ background:#fafbfd; }
+
+  /* Sheet tabs */
+  .sheetbar{
+    flex:none; background:var(--surface); border-top:1px solid var(--border);
+    overflow-x:auto; white-space:nowrap; scrollbar-width:none;
+  }
+  .sheetbar::-webkit-scrollbar{ display:none; }
+  .sheet-tabs{ display:flex; gap:6px; padding:8px 10px; }
+  .sheet-tab{
+    flex:none; padding:7px 14px; border-radius:9px;
+    border:1px solid var(--border); background:var(--surface-2);
+    color:var(--muted); font:inherit; font-size:12.5px; font-weight:600;
+    cursor:pointer; transition:background .15s, color .15s, border-color .15s;
+    max-width:180px; overflow:hidden; text-overflow:ellipsis;
+  }
+  .sheet-tab.active{ background:var(--accent); border-color:var(--accent); color:#fff; }
+
+  /* Loader / empty */
+  .loader{
+    position:absolute; top:16px; left:50%; transform:translateX(-50%);
+    width:36px; height:36px; border-radius:50%;
+    background:var(--surface-2); border:1px solid var(--border);
+    display:flex; align-items:center; justify-content:center;
+    opacity:0; pointer-events:none; transition:opacity .2s; z-index:10;
+  }
+  .loader.show{ opacity:1; }
+  .spinner{
+    width:16px; height:16px; border-radius:50%;
+    border:2px solid rgba(128,128,128,.28); border-top-color:var(--accent);
+    animation:spin .7s linear infinite;
+  }
+  @keyframes spin{ to{ transform:rotate(360deg); } }
+
+  .empty{
+    position:absolute; inset:0; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; gap:4px; padding:28px;
+    text-align:center; color:var(--muted); background:var(--bg); z-index:4;
+  }
+  .empty.hidden{ display:none; }
+  .empty-icon{ font-size:52px; line-height:1; margin-bottom:8px; filter:grayscale(.3); }
+  .empty h2{ margin:0; font-size:17px; font-weight:600; color:var(--text); }
+  .empty p{ margin:0; font-size:13.5px; max-width:260px; line-height:1.5; }
+  .primary{
+    margin-top:18px; padding:13px 28px; border:0; border-radius:14px;
+    background:var(--accent); color:#fff; font-size:15px; font-weight:600;
+    cursor:pointer; transition:transform .1s, filter .15s;
+  }
+  .primary:active{ transform:scale(.96); filter:brightness(.95); }
+
+  /* Bottom bar */
+  .bottombar{
+    flex:none; display:flex; align-items:center; gap:2px;
+    padding:6px 8px calc(env(safe-area-inset-bottom,0px) + 6px);
+    background:var(--surface); border-top:1px solid var(--border); z-index:5;
+  }
+  .spacer{ flex:1; }
+  .pager{ display:flex; align-items:center; gap:5px; font-size:13px; color:var(--muted); white-space:nowrap; }
+  #pageInput{
+    width:46px; height:36px; text-align:center;
+    background:var(--surface-2); border:1px solid var(--border);
+    border-radius:9px; color:var(--text); font-size:14px; font-weight:600;
+    font-family:inherit; outline:none; -moz-appearance:textfield; user-select:text;
+  }
+  #pageInput:focus{ border-color:var(--accent); }
+  #pageInput:disabled{ opacity:.4; }
+  #pageInput::-webkit-outer-spin-button,
+  #pageInput::-webkit-inner-spin-button{ -webkit-appearance:none; margin:0; }
+
+  .zoom-label{
+    min-width:56px; height:36px; border:0; border-radius:9px;
+    background:transparent; color:var(--muted); font-size:12px; font-weight:700;
+    font-family:inherit; cursor:pointer; touch-action:manipulation;
+  }
+  .zoom-label:active{ background:var(--surface-2); }
+  .divider{ width:1px; height:22px; background:var(--border); margin:0 4px; }
+
+  @media (max-width:360px){
+    .btn{ width:40px; min-width:40px; height:40px; }
+    .zoom-label{ min-width:46px; font-size:11px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="app">
+
+  <header class="topbar">
+    <button class="btn" id="openBtn" aria-label="Open file" title="Open file">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>
+      </svg>
+    </button>
+
+    <div class="doc-title is-empty" id="docTitle">No document open</div>
+
+    <button class="btn" id="installBtn" hidden aria-label="Install app" title="Install app">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+        <polyline points="7 10 12 15 17 10"/>
+        <line x1="12" y1="15" x2="12" y2="3"/>
+      </svg>
+    </button>
+
+    <button class="btn" id="themeBtn" aria-label="Toggle theme" title="Toggle theme">
+      <svg class="icon-moon" width="20" height="20" viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+      </svg>
+      <svg class="icon-sun" width="20" height="20" viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="4"/>
+        <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>
+      </svg>
+    </button>
+  </header>
+
+  <div class="ios-banner" id="iosBanner" hidden>
+    <span>Install: tap <strong>Share</strong> → <strong>Add to Home Screen</strong></span>
+    <button class="ios-banner-close" aria-label="Dismiss">×</button>
+  </div>
+
+  <main class="viewer" id="viewer">
+    <div class="stage" id="stage">
+      <canvas id="canvas"></canvas>
+    </div>
+
+    <div class="sheet-wrap" id="sheetWrap" hidden>
+      <div class="sheet-stage" id="sheetStage">
+        <table class="sheet-table" id="sheetTable"></table>
+      </div>
+    </div>
+
+    <div class="loader" id="loader"><div class="spinner"></div></div>
+
+    <div class="empty" id="empty">
+      <div class="empty-icon">📄</div>
+      <h2>No document open</h2>
+      <p>Pick a PDF, Excel or CSV file from your device</p>
+      <button class="primary" id="openBtn2">Open file</button>
+    </div>
+  </main>
+
+  <div class="sheetbar" id="sheetBar" hidden>
+    <div class="sheet-tabs" id="sheetTabs"></div>
+  </div>
+
+  <footer class="bottombar">
+    <button class="btn" id="prevBtn" aria-label="Previous" disabled>
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="15 18 9 12 15 6"/>
+      </svg>
+    </button>
+
+    <div class="pager">
+      <input id="pageInput" type="number" min="1" value="" inputmode="numeric" disabled aria-label="Page or sheet number">
+      <span>/ <span id="pageCount">0</span></span>
+    </div>
+
+    <button class="btn" id="nextBtn" aria-label="Next" disabled>
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="9 18 15 12 9 6"/>
+      </svg>
+    </button>
+
+    <div class="spacer"></div>
+    <div class="divider"></div>
+
+    <button class="btn" id="zoomOut" aria-label="Zoom out" disabled>
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="2.2" stroke-linecap="round"><path d="M5 12h14"/></svg>
+    </button>
+
+    <button class="zoom-label" id="zoomLabel" title="Reset zoom">100%</button>
+
+    <button class="btn" id="zoomIn" aria-label="Zoom in" disabled>
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+    </button>
+  </footer>
+
+  <input type="file" id="fileInput"
+         accept="application/pdf,.pdf,.xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv"
+         hidden>
+</div>
+
+<!-- Engines -->
+<script crossorigin="anonymous" src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script crossorigin="anonymous" src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+<script>
+(function () {
+  'use strict';
+
+  /* ============================================================
+     Config
+     ============================================================ */
+  const PDFJS_VERSION = '3.11.174';
+  const CDN        = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/' + PDFJS_VERSION + '/';
+  const ASSET_BASE = 'https://unpkg.com/pdfjs-dist@' + PDFJS_VERSION + '/';
+
+  const MAX_ZOOM = 5, MIN_ZOOM = 0.5;
+  const MAX_ROWS = 2000;
+  const SHEET_BASE_FONT = 13;
+
+  const $ = (id) => document.getElementById(id);
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  const distance = (a, b) => Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+  const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) =>
+    ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+
+  const els = {
+    viewer:$('viewer'), stage:$('stage'), canvas:$('canvas'),
+    sheetWrap:$('sheetWrap'), sheetStage:$('sheetStage'), sheetTable:$('sheetTable'),
+    sheetBar:$('sheetBar'), sheetTabs:$('sheetTabs'),
+    loader:$('loader'), empty:$('empty'), docTitle:$('docTitle'),
+    pageInput:$('pageInput'), pageCount:$('pageCount'),
+    prev:$('prevBtn'), next:$('nextBtn'),
+    zoomIn:$('zoomIn'), zoomOut:$('zoomOut'), zoomLabel:$('zoomLabel'),
+    fileInput:$('fileInput'), openBtn:$('openBtn'), openBtn2:$('openBtn2'),
+    themeBtn:$('themeBtn'),
+  };
+
+  const state = {
+    mode:null, pdf:null, page:1, workbook:null, sheetIndex:0,
+    zoom:1, name:'',
+  };
+
+  /* ============================================================
+     Engines
+     ============================================================ */
+  const pdfReady  = !!window.pdfjsLib;
+  const xlsxReady = !!window.XLSX;
+  if (pdfReady) {
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc = CDN + 'pdf.worker.min.js';
+  }
+
+  function showLoader(on) { els.loader.classList.toggle('show', on); }
+
+  /* ============================================================
+     PDF
+     ============================================================ */
+  let renderToken = 0, activeTask = null;
+
+  async function renderPdfPage(num, opts) {
+    if (!state.pdf) return;
+    opts = opts || {};
+    const total = state.pdf.numPages;
+    const pageNum = clamp(Math.round(num) || 1, 1, total);
+    state.page = pageNum;
+    updateUI();
+
+    const token = ++renderToken;
+    if (activeTask) { try { activeTask.cancel(); } catch (_) {} activeTask = null; }
+    showLoader(true);
+
+    try {
+      const page = await state.pdf.getPage(pageNum);
+      if (token !== renderToken) return;
+
+      const availW = Math.max(140, els.viewer.clientWidth - 24);
+      const base = page.getViewport({ scale: 1 });
+      const fit = availW / base.width;
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const vp = page.getViewport({ scale: fit * state.zoom * dpr });
+
+      const w = Math.floor(vp.width), h = Math.floor(vp.height);
+      els.canvas.width = w; els.canvas.height = h;
+      els.canvas.style.width  = Math.round(w / dpr) + 'px';
+      els.canvas.style.height = Math.round(h / dpr) + 'px';
+
+      if (!opts.keepScroll) { els.viewer.scrollTop = 0; els.viewer.scrollLeft = 0; }
+
+      const ctx = els.canvas.getContext('2d', { alpha: false });
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, w, h);
+
+      activeTask = page.render({ canvasContext: ctx, viewport: vp, background: '#ffffff' });
+      await activeTask.promise;
+      activeTask = null;
+    } catch (err) {
+      if (err && err.name === 'RenderingCancelledException') return;
+      console.error('PDF render failed:', err);
+    } finally {
+      if (token === renderToken) showLoader(false);
+    }
+  }
+
+  /* ============================================================
+     Excel
+     ============================================================ */
+  function fmtCell(v) {
+    if (v === null || v === undefined || v === '') return '';
+    if (v instanceof Date) {
+      const p = (n) => String(n).padStart(2, '0');
+      return v.getFullYear() + '-' + p(v.getMonth()+1) + '-' + p(v.getDate()) +
+             ' ' + p(v.getHours()) + ':' + p(v.getMinutes());
+    }
+    return String(v);
+  }
+
+  function renderSheet(index) {
+    const wb = state.workbook;
+    if (!wb) return;
+
+    const names = wb.SheetNames;
+    index = clamp(index, 0, names.length - 1);
+    state.sheetIndex = index;
+
+    const ws = wb.Sheets[names[index]];
+    const rows = ws
+      ? window.XLSX.utils.sheet_to_json(ws, { header:1, blankrows:false, defval:'' })
+      : [];
+
+    const shown = rows.slice(0, MAX_ROWS);
+    let cols = 0;
+    for (const r of shown) cols = Math.max(cols, r.length);
+
+    let html = '';
+    for (let r = 0; r < shown.length; r++) {
+      const row = shown[r];
+      const tag = r === 0 ? 'th' : 'td';
+      html += '<tr>';
+      for (let c = 0; c < cols; c++) {
+        html += '<' + tag + '>' + escapeHtml(fmtCell(row[c])) + '</' + tag + '>';
+      }
+      html += '</tr>';
+    }
+    if (!html) html = '<tr><td>(empty sheet)</td></tr>';
+
+    els.sheetTable.innerHTML = html;
+    els.sheetWrap.scrollTop = 0;
+    els.sheetWrap.scrollLeft = 0;
+
+    applySheetZoom();
+    highlightActiveTab();
+    updateUI();
+  }
+
+  function applySheetZoom() {
+    els.sheetTable.style.fontSize = (SHEET_BASE_FONT * state.zoom) + 'px';
+  }
+
+  function buildSheetTabs() {
+    const wb = state.workbook;
+    els.sheetTabs.innerHTML = '';
+    if (!wb || wb.SheetNames.length <= 1) { els.sheetBar.hidden = true; return; }
+
+    wb.SheetNames.forEach((name, i) => {
+      const b = document.createElement('button');
+      b.className = 'sheet-tab';
+      b.textContent = name;
+      b.addEventListener('click', () => { renderSheet(i); els.sheetWrap.scrollTop = 0; });
+      els.sheetTabs.appendChild(b);
+    });
+    els.sheetBar.hidden = false;
+    highlightActiveTab();
+  }
+
+  function highlightActiveTab() {
+    const tabs = els.sheetTabs.children;
+    for (let i = 0; i < tabs.length; i++) tabs[i].classList.toggle('active', i === state.sheetIndex);
+  }
+
+  /* ============================================================
+     Zoom / navigation / UI
+     ============================================================ */
+  function setZoom(z, keepScroll) {
+    if (!state.mode) return;
+    const next = clamp(z, MIN_ZOOM, MAX_ZOOM);
+    if (Math.abs(next - state.zoom) < 0.005) return;
+    state.zoom = next;
+    updateUI();
+    if (state.mode === 'pdf') renderPdfPage(state.page, { keepScroll: keepScroll !== false });
+    else applySheetZoom();
+  }
+
+  function navigateTo(n) {
+    if (state.mode === 'pdf' && state.pdf) renderPdfPage(n);
+    else if (state.mode === 'sheet' && state.workbook) renderSheet(n - 1);
+  }
+
+  function currentIndex() {
+    if (state.mode === 'pdf' && state.pdf) return state.page;
+    if (state.mode === 'sheet' && state.workbook) return state.sheetIndex + 1;
+    return 0;
+  }
+  function totalItems() {
+    if (state.mode === 'pdf' && state.pdf) return state.pdf.numPages;
+    if (state.mode === 'sheet' && state.workbook) return state.workbook.SheetNames.length;
+    return 0;
+  }
+
+  function updateUI() {
+    const has = !!state.mode, total = totalItems(), cur = currentIndex();
+    els.pageCount.textContent = total;
+    els.pageInput.value = has ? cur : '';
+    els.pageInput.max = total;
+    els.pageInput.disabled = !has;
+
+    els.prev.disabled = !has || cur <= 1;
+    els.next.disabled = !has || cur >= total;
+    els.zoomIn.disabled  = !has || state.zoom >= MAX_ZOOM - 0.001;
+    els.zoomOut.disabled = !has || state.zoom <= MIN_ZOOM + 0.001;
+    els.zoomLabel.textContent = Math.round(state.zoom * 100) + '%';
+  }
+
+  function destroyPdf() {
+    if (activeTask) { try { activeTask.cancel(); } catch (_) {} activeTask = null; }
+    if (state.pdf) { try { state.pdf.destroy(); } catch (_) {} }
+    state.pdf = null;
+  }
+
+  function resetViews() {
+    els.stage.hidden = false;
+    els.sheetWrap.hidden = true;
+    els.sheetTable.innerHTML = '';
+    els.sheetTabs.innerHTML = '';
+    els.sheetBar.hidden = true;
+  }
+
+  /* ============================================================
+     Open
+     ============================================================ */
+  async function openFile(file) {
+    if (!file) return;
+    const name = file.name || '';
+    const ext = name.toLowerCase().split('.').pop();
+    const type = file.type || '';
+
+    if (type === 'application/pdf' || ext === 'pdf') return openPdf(file);
+    if (['xlsx','xls','csv'].includes(ext) || /spreadsheet|excel|csv/.test(type)) return openSheet(file);
+
+    alert('Unsupported file type.\nChoose a PDF, .xlsx, .xls or .csv file.');
+  }
+
+  async function openPdf(file) {
+    if (!pdfReady) { alert('PDF engine not loaded.\nCheck connection and reload.'); return; }
+    showLoader(true);
+    try {
+      const data = new Uint8Array(await file.arrayBuffer());
+      const doc = await window.pdfjsLib.getDocument({
+        data, cMapUrl: ASSET_BASE + 'cmaps/', cMapPacked: true,
+        standardFontDataUrl: ASSET_BASE + 'standard_fonts/',
+      }).promise;
+
+      destroyPdf();
+      state.workbook = null;
+      state.mode = 'pdf'; state.pdf = doc;
+      state.zoom = 1; state.page = 1;
+      state.name = (file.name || 'Document').replace(/\.pdf$/i, '');
+
+      resetViews();
+      els.docTitle.textContent = state.name;
+      els.docTitle.classList.remove('is-empty');
+      els.empty.classList.add('hidden');
+      document.title = state.name + ' — Reader';
+      await renderPdfPage(1);
+    } catch (err) {
+      console.error(err); showLoader(false);
+      alert('Could not open this PDF.\n' + (err && err.message ? err.message : 'Unknown error'));
+    }
+  }
+
+  async function openSheet(file) {
+    if (!xlsxReady) { alert('Excel engine not loaded.\nCheck connection and reload.'); return; }
+    showLoader(true);
+    try {
+      const data = new Uint8Array(await file.arrayBuffer());
+      const wb = window.XLSX.read(data, { type:'array', cellDates:true });
+      if (!wb || !wb.SheetNames || !wb.SheetNames.length) throw new Error('No worksheets found.');
+
+      destroyPdf();
+      state.pdf = null;
+      state.mode = 'sheet';
+      state.workbook = wb;
+      state.sheetIndex = 0;
+      state.zoom = 1;
+      state.name = (file.name || 'Workbook').replace(/\.(xlsx|xls|csv)$/i, '');
+
+      resetViews();
+      els.stage.hidden = true;
+      els.sheetWrap.hidden = false;
+
+      els.docTitle.textContent = state.name;
+      els.docTitle.classList.remove('is-empty');
+      els.empty.classList.add('hidden');
+      document.title = state.name + ' — Reader';
+
+      buildSheetTabs();
+      renderSheet(0);
+    } catch (err) {
+      console.error(err);
+      alert('Could not open this spreadsheet.\n' + (err && err.message ? err.message : 'Unknown error'));
+    } finally {
+      showLoader(false);
+    }
+  }
+
+  /* ============================================================
+     File picker & controls
+     ============================================================ */
+  const pickFile = () => els.fileInput.click();
+  els.openBtn.addEventListener('click', pickFile);
+  els.openBtn2.addEventListener('click', pickFile);
+  els.fileInput.addEventListener('change', (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (f) openFile(f);
+    e.target.value = '';
+  });
+
+  els.prev.addEventListener('click', () => navigateTo(currentIndex() - 1));
+  els.next.addEventListener('click', () => navigateTo(currentIndex() + 1));
+  els.zoomIn.addEventListener('click',  () => setZoom(state.zoom * 1.25));
+  els.zoomOut.addEventListener('click', () => setZoom(state.zoom / 1.25));
+  els.zoomLabel.addEventListener('click', () => setZoom(1));
+
+  els.pageInput.addEventListener('change', () => {
+    const n = parseInt(els.pageInput.value, 10);
+    if (!isNaN(n) && n >= 1) navigateTo(n); else updateUI();
+  });
+  els.pageInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') els.pageInput.blur();
+    e.stopPropagation();
+  });
+
+  /* ============================================================
+     Theme
+     ============================================================ */
+  function applyTheme(light) {
+    document.body.classList.toggle('light', light);
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', light ? '#ffffff' : '#0b0c0f');
+    try { localStorage.setItem('reader.theme', light ? 'light' : 'dark'); } catch (_) {}
+  }
+  els.themeBtn.addEventListener('click', () => {
+    applyTheme(!document.body.classList.contains('light'));
+  });
+  (function initTheme() {
+    let saved = null;
+    try { saved = localStorage.getItem('reader.theme'); } catch (_) {}
+    if (saved === 'light') applyTheme(true);
+    else if (saved === 'dark') applyTheme(false);
+    else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) applyTheme(true);
+  })();
+
+  /* ============================================================
+     Touch gestures
+     ============================================================ */
+  let pinchStart = null, swipeStart = null, lastTapTime = 0;
+
+  els.viewer.addEventListener('touchstart', (e) => {
+    if (e.touches.length === 2) {
+      swipeStart = null;
+      pinchStart = { dist: distance(e.touches[0], e.touches[1]),
+                     zoom: state.zoom, pending: state.zoom };
+    } else if (e.touches.length === 1) {
+      pinchStart = null;
+      swipeStart = { x: e.touches[0].clientX, y: e.touches[0].clientY, t: Date.now() };
+    }
+  }, { passive:true });
+
+  els.viewer.addEventListener('touchmove', (e) => {
+    if (pinchStart && e.touches.length === 2) {
+      e.preventDefault();
+      const d = distance(e.touches[0], e.touches[1]);
+      const z = clamp(pinchStart.zoom * (d / (pinchStart.dist || 1)), MIN_ZOOM, MAX_ZOOM);
+      pinchStart.pending = z;
+      if (state.mode === 'pdf') els.stage.style.transform = 'scale(' + (z / state.zoom) + ')';
+      else if (state.mode === 'sheet') els.sheetTable.style.fontSize = (SHEET_BASE_FONT * z) + 'px';
+    }
+  }, { passive:false });
+
+  els.viewer.addEventListener('touchend', (e) => {
+    if (pinchStart) {
+      const z = pinchStart.pending;
+      const changed = Math.abs(z - state.zoom) > 0.02;
+      pinchStart = null;
+      els.stage.style.transform = '';
+      swipeStart = null;
+      if (changed) setZoom(z);
+      else if (state.mode === 'sheet') applySheetZoom();
+      return;
+    }
+    if (!swipeStart) return;
+    const t = e.changedTouches[0];
+    if (!t) { swipeStart = null; return; }
+    const dx = t.clientX - swipeStart.x, dy = t.clientY - swipeStart.y;
+    const dt = Date.now() - swipeStart.t;
+    swipeStart = null;
+
+    if (state.mode === 'pdf' && dt < 700 &&
+        Math.abs(dx) > Math.abs(dy) * 1.4 && Math.abs(dx) > 55) {
+      const v = els.viewer;
+      const atLeft  = v.scrollLeft <= 2;
+      const atRight = v.scrollLeft >= v.scrollWidth - v.clientWidth - 2;
+      if (dx < 0 && atRight) { navigateTo(currentIndex() + 1); return; }
+      if (dx > 0 && atLeft)  { navigateTo(currentIndex() - 1); return; }
+    }
+
+    if (dt < 260 && Math.abs(dx) < 14 && Math.abs(dy) < 14 && state.mode) {
+      const now = Date.now();
+      if (now - lastTapTime < 320) { setZoom(state.zoom > 1.05 ? 1 : 2.5); lastTapTime = 0; }
+      else lastTapTime = now;
+    }
+  }, { passive:true });
+
+  /* ============================================================
+     Keyboard
+     ============================================================ */
+  window.addEventListener('keydown', (e) => {
+    if (e.target === els.pageInput) return;
+    if (!state.mode) return;
+    switch (e.key) {
+      case 'ArrowRight': case 'PageDown': e.preventDefault(); navigateTo(currentIndex()+1); break;
+      case 'ArrowLeft':  case 'PageUp':   e.preventDefault(); navigateTo(currentIndex()-1); break;
+      case 'Home': e.preventDefault(); navigateTo(1); break;
+      case 'End':  e.preventDefault(); navigateTo(totalItems()); break;
+      case '+': case '=': e.preventDefault(); setZoom(state.zoom * 1.25); break;
+      case '-':            e.preventDefault(); setZoom(state.zoom / 1.25); break;
+      case '0':            e.preventDefault(); setZoom(1); break;
+    }
+  });
+
+  /* ============================================================
+     Drag & drop / resize
+     ============================================================ */
+  ['dragover','drop'].forEach((ev) => window.addEventListener(ev, (e) => e.preventDefault()));
+  window.addEventListener('drop', (e) => {
+    const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f) openFile(f);
+  });
+
+  let resizeTimer = null;
+  function handleResize() {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      if (state.mode === 'pdf' && state.pdf) renderPdfPage(state.page, { keepScroll: true });
+    }, 200);
+  }
+  window.addEventListener('resize', handleResize);
+  window.addEventListener('orientationchange', handleResize);
+
+  /* ============================================================
+     Boot
+     ============================================================ */
+  updateUI();
+  if (!pdfReady || !xlsxReady) {
+    const missing = [];
+    if (!pdfReady)  missing.push('PDF');
+    if (!xlsxReady) missing.push('Excel');
+    els.empty.querySelector('h2').textContent = 'Engine offline';
+    els.empty.querySelector('p').textContent =
+      missing.join(' and ') + ' support could not load. Connect to the internet and refresh.';
+  }
+
+  /* ============================================================
+     PWA: install prompt + iOS hint
+     ============================================================ */
+  const installBtn = document.getElementById('installBtn');
+  const isStandalone = () =>
+    window.matchMedia('(display-mode: standalone)').matches ||
+    window.navigator.standalone === true;
+
+  if (isStandalone()) installBtn.hidden = true;
+
+  let deferredPrompt = null;
+
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferredPrompt = e;
+    if (!isStandalone()) installBtn.hidden = false;
+  });
+
+  installBtn.addEventListener('click', async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    try {
+      const { outcome } = await deferredPrompt.userChoice;
+      if (outcome === 'accepted') installBtn.hidden = true;
+    } catch (_) {}
+    deferredPrompt = null;
+  });
+
+  window.addEventListener('appinstalled', () => {
+    installBtn.hidden = true;
+    deferredPrompt = null;
+  });
+
+  (function iosHint() {
+    const banner = document.getElementById('iosBanner');
+    const ua = navigator.userAgent;
+    const isIos = /iphone|ipad|ipod/i.test(ua);
+    const isSafari = /^((?!chrome|android|crios|fxios).)*safari/i.test(ua);
+    const dismissed = localStorage.getItem('reader.iosHintDismissed') === '1';
+    if (isIos && isSafari && !isStandalone() && !dismissed) banner.hidden = false;
+    banner.querySelector('.ios-banner-close').addEventListener('click', () => {
+      banner.hidden = true;
+      try { localStorage.setItem('reader.iosHintDismissed', '1'); } catch (_) {}
+    });
+  })();
+
+  /* ============================================================
+     PWA: service worker
+     ============================================================ */
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('./sw.js').catch((err) => {
+        console.warn('Service worker registration failed:', err);
+      });
+    });
+  }
+})();
+</script>
+</body>
+</html>
